@@ -1,6 +1,8 @@
 # Changelog
 
-## 1.1.0-g435 — 2026-11-17
+## 1.1.0-g435
+
+- Stabilize G435 percent: median voltage samples + ±2% sticky display so Refresh does not flicker mid-curve. — 2026-11-17
 
 First public build of this fork.
 

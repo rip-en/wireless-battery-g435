@@ -73,6 +73,17 @@ int main() {
     assert(G435::Percent(3300) == 0);
     assert(G435::Percent(3831) >= 50 && G435::Percent(3831) <= 60);
 
+    // Mid-curve ADC noise (~10–20 mV) must not flip the tray between adjacent percents.
+    {
+        int a = G435::Percent(3740);  // ~38%
+        int b = G435::Percent(3750);  // 40%
+        assert(a != b);
+        assert(G435::StickyPercent(3750, a) == a);
+        assert(G435::StickyPercent(3740, b) == b);
+        assert(G435::StickyPercent(3700, 40) == 30);  // real step still moves
+        assert(G435::StickyPercent(3750, -1) == 40);
+    }
+
     auto lq = G435::HoltekLq(0xE1, { 0x01 });
     const std::vector<std::uint8_t> expectLq = { 0x50, 0x41, 0x0E, 0x00, 0x02, 0xE1, 0x01 };
     assert(lq == expectLq);

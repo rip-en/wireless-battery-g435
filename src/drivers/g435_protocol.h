@@ -24,6 +24,15 @@ inline int Percent(int mv) {
     return p[n - 1];
 }
 
+// Mid-curve (around 3.7–3.8 V) a few mV of ADC noise moves the estimate by 1–2%. Keep the
+// previously shown percent unless the new raw value moved by more than `slack`.
+inline int StickyPercent(int mv, int prevPct, int slack = 2) {
+    int raw = Percent(mv);
+    if (prevPct < 0 || slack < 0) return raw;
+    if (raw >= prevPct - slack && raw <= prevPct + slack) return prevPct;
+    return raw;
+}
+
 // Real headset cells sit around 3.0–4.5 V. Local-mode garbage from the Realtek dongle is ~102.
 inline bool IsPlausible(int mv) { return mv >= 3000 && mv <= 4500; }
 

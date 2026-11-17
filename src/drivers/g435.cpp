@@ -15,6 +15,7 @@
 #include "drivers.h"
 #include "g435_protocol.h"
 
+#include <algorithm>
 #include <atomic>
 #include <functional>
 
@@ -36,6 +37,7 @@ struct Cache {
     bool haveReading = false;
     bool loaded = false;
     int lastMv = 0;
+    int lastPct = -1;           // sticky display % so ADC noise does not flicker the tray
     ULONGLONG lastAttempt = 0;  // cooldown; never cleared on brief USB dropouts
     USHORT pid = 0;
 };
@@ -50,6 +52,7 @@ void LoadPersisted() {
     if (RegGetValueW(HKEY_CURRENT_USER, kRegKey, L"G435Pid", RRF_RT_REG_DWORD, nullptr, &pid, &n) != ERROR_SUCCESS) return;
     if (!G435::IsPlausible((int)mv) || (pid != kPidRealtek && pid != kPidHoltek)) return;
     g_cache.lastMv = (int)mv;
+    g_cache.lastPct = G435::Percent((int)mv);
     g_cache.pid = (USHORT)pid;
     g_cache.haveReading = true;
 }
@@ -127,22 +130,28 @@ int ReadRealtekMv(HidDev& d) {
     if (!RealtekSendPa(d, { 0x50, 0x41, 0x0E, 0x00, 0x02, 0xE1, 0x01 })) return 0;  // remote
     Sleep(150);
 
-    int mv = 0;
+    // Take several samples while the bridge is open; median beats a single noisy ADC hit.
+    std::vector<int> samples;
     if (RealtekSendPa(d, { 0x50, 0x41, 0x06, 0x00, 0x01, 0x00, 0x31 })) {
-        ULONGLONG end = GetTickCount64() + 800;
+        ULONGLONG end = GetTickCount64() + 900;
         std::vector<BYTE> r;
-        while (!mv && GetTickCount64() < end) {
+        while (samples.size() < 5 && GetTickCount64() < end) {
             if (d.GetFeature(kReport, r)) {
                 int parsed = 0;
-                if (G435::ParseRealtekBattery(r.data(), r.size(), parsed) && G435::IsPlausible(parsed)) mv = parsed;
+                if (G435::ParseRealtekBattery(r.data(), r.size(), parsed) && G435::IsPlausible(parsed)) {
+                    samples.push_back(parsed);
+                    continue;
+                }
             }
-            if (!mv) Sleep(40);
+            Sleep(40);
         }
     }
 
     RealtekSendPa(d, { 0x50, 0x41, 0x0E, 0x00, 0x02, 0xE1, 0x00 });  // local
     Sleep(50);
-    return mv;  // guard exits bootloader
+    if (samples.empty()) return 0;
+    std::sort(samples.begin(), samples.end());
+    return samples[samples.size() / 2];  // guard exits bootloader
 }
 
 // ---- Holtek (046D:0ADF) ---------------------------------------------------------------------
@@ -275,6 +284,7 @@ void PollG435(PollContext& ctx) {
             if (mv) {
                 g_cache.haveReading = true;
                 g_cache.lastMv = mv;
+                g_cache.lastPct = G435::StickyPercent(mv, g_cache.lastPct);
                 SavePersisted();
             } else if (!g_cache.haveReading) {
                 // keep any persisted value; only clear when we never had one
@@ -289,7 +299,8 @@ void PollG435(PollContext& ctx) {
     s.via = isHoltek ? L"LIGHTSPEED receiver (Holtek)" : L"LIGHTSPEED receiver";
     s.kind = DeviceKind::Headset;
     s.millivolts = g_cache.lastMv;
-    s.percent = G435::Percent(g_cache.lastMv);
+    if (g_cache.lastPct < 0) g_cache.lastPct = G435::StickyPercent(g_cache.lastMv, -1);
+    s.percent = g_cache.lastPct;
     s.graceSec = 1800;
     // Soften the first minutes after launch when we are still showing the last saved reading.
     if (startupHold) s.asleep = true;
