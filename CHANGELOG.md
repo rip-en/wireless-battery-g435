@@ -2,6 +2,9 @@
 
 ## 1.1.0-g435
 
+- Tray menu **Check interval** (30s / 1m / 2m / 5m / 15m), remembered in the registry
+- Slightly smaller tray glyphs and taskbar widget padding
+
 - Stabilize G435 percent: median voltage samples + ±2% sticky display so Refresh does not flicker mid-curve. — 2026-11-17
 
 First public build of this fork.

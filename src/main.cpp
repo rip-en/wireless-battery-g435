@@ -6,6 +6,7 @@
 #include <hidclass.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <map>
 #include <set>
@@ -23,13 +24,27 @@ constexpr UINT WM_RESULTS = WM_APP + 2;
 constexpr UINT WM_WIDGET_CLICK = WM_APP + 3;
 constexpr UINT_PTR TIMER_DEBOUNCE = 1;
 constexpr UINT_PTR TIMER_WIDGET = 2;
-constexpr DWORD POLL_INTERVAL_MS = 90 * 1000;  // less frequent HID enumeration keeps the PC snappy
+constexpr DWORD kDefaultPollMs = 60 * 1000;  // user can change this from the tray menu
 constexpr int LOW_BATTERY = 15;
 constexpr UINT PLACEHOLDER_ID = 1;
 
 enum MenuId : UINT {
     ID_REFRESH = 100, ID_AUTOSTART, ID_HIDE_LAST_KNOWN, ID_WIDGET_BACKGROUND, ID_EXIT, ID_MODE_WIDGET, ID_MODE_TRAY,
+    ID_POLL_30S = 200, ID_POLL_1M, ID_POLL_2M, ID_POLL_5M, ID_POLL_15M,
     ID_DEVICE_FIRST = 1000
+};
+
+struct PollChoice {
+    UINT id;
+    DWORD ms;
+    const wchar_t* label;
+};
+constexpr PollChoice kPollChoices[] = {
+    { ID_POLL_30S, 30 * 1000, L"Every 30 seconds" },
+    { ID_POLL_1M, 60 * 1000, L"Every 1 minute" },
+    { ID_POLL_2M, 2 * 60 * 1000, L"Every 2 minutes" },
+    { ID_POLL_5M, 5 * 60 * 1000, L"Every 5 minutes" },
+    { ID_POLL_15M, 15 * 60 * 1000, L"Every 15 minutes" },
 };
 
 const wchar_t* kAppName = L"Wireless Battery";
@@ -47,6 +62,7 @@ bool g_wantWidget = false;     // tray icons by default (taskbar child widget ca
 bool g_useWidget = false;      // what is actually shown right now
 bool g_hideLastKnown = false;  // hide (last known) / asleep devices from taskbar and tray
 bool g_widgetBackground = false;  // draw a plate behind the taskbar text (transparent taskbar themes)
+std::atomic<DWORD> g_pollIntervalMs{ kDefaultPollMs };
 
 struct TrayEntry {
     UINT uid = 0;
@@ -138,6 +154,46 @@ void SaveHideLastKnown(bool on) { SaveBoolSetting(L"HideLastKnownDevices", on); 
 bool LoadWidgetBackground() { return LoadBoolSetting(L"WidgetBackground", false); }
 void SaveWidgetBackground(bool on) { SaveBoolSetting(L"WidgetBackground", on); }
 
+DWORD ClampPollMs(DWORD ms) {
+    for (const auto& c : kPollChoices) {
+        if (c.ms == ms) return ms;
+    }
+    // Snap unknown values (e.g. older builds) to the nearest preset.
+    DWORD best = kDefaultPollMs;
+    DWORD bestDist = 0xFFFFFFFFu;
+    for (const auto& c : kPollChoices) {
+        DWORD d = ms > c.ms ? ms - c.ms : c.ms - ms;
+        if (d < bestDist) { bestDist = d; best = c.ms; }
+    }
+    return best;
+}
+
+DWORD LoadPollIntervalMs() {
+    DWORD v = kDefaultPollMs, sz = sizeof(v);
+    RegGetValueW(HKEY_CURRENT_USER, kSettingsKey, L"PollIntervalMs", RRF_RT_REG_DWORD, nullptr, &v, &sz);
+    return ClampPollMs(v);
+}
+
+void SavePollIntervalMs(DWORD ms) {
+    ms = ClampPollMs(ms);
+    RegSetKeyValueW(HKEY_CURRENT_USER, kSettingsKey, L"PollIntervalMs", REG_DWORD, &ms, sizeof(ms));
+}
+
+void SetPollIntervalMs(DWORD ms) {
+    ms = ClampPollMs(ms);
+    g_pollIntervalMs.store(ms);
+    SavePollIntervalMs(ms);
+    if (g_refreshEvt) SetEvent(g_refreshEvt);  // apply immediately; next wait uses the new interval
+}
+
+const wchar_t* PollIntervalLabel(DWORD ms) {
+    ms = ClampPollMs(ms);
+    for (const auto& c : kPollChoices) {
+        if (c.ms == ms) return c.label;
+    }
+    return L"Custom";
+}
+
 bool AutostartEnabled() {
     wchar_t buf[MAX_PATH * 2];
     DWORD sz = sizeof(buf);
@@ -167,8 +223,10 @@ struct Rgb { BYTE r, g, b; };
 HICON RenderIcon(const std::wstring& text, int barPct, Rgb textColor, Rgb barColor, bool dim) {
     HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
     UINT dpi = taskbar ? GetDpiForWindow(taskbar) : 0;
-    const int S = GetSystemMetricsForDpi(SM_CXSMICON, dpi ? dpi : GetDpiForSystem());
-    const int barH = std::max(2, S / 8);
+    // Prefer a slightly smaller glyph than the full system tray slot so digits look denser.
+    const int slot = GetSystemMetricsForDpi(SM_CXSMICON, dpi ? dpi : GetDpiForSystem());
+    const int S = std::max(12, slot - (slot >= 20 ? 2 : 0));
+    const int barH = std::max(1, S / 10);
     const int textH = S - barH - 1;
 
     HDC dc = CreateCompatibleDC(nullptr);
@@ -508,6 +566,20 @@ void ShowMenu() {
     UINT bgFlags = MF_STRING | (g_widgetBackground ? MF_CHECKED : 0) | (g_wantWidget ? 0 : MF_GRAYED);
     AppendMenuW(m, bgFlags, ID_WIDGET_BACKGROUND, L"Background behind taskbar text (for transparent taskbars)");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    HMENU pollMenu = CreatePopupMenu();
+    const DWORD pollMs = g_pollIntervalMs.load();
+    for (const auto& c : kPollChoices) {
+        AppendMenuW(pollMenu, MF_STRING | (c.ms == pollMs ? MF_CHECKED : 0), c.id, c.label);
+    }
+    CheckMenuRadioItem(pollMenu, ID_POLL_30S, ID_POLL_15M,
+                       pollMs == 30 * 1000 ? ID_POLL_30S
+                       : pollMs == 60 * 1000 ? ID_POLL_1M
+                       : pollMs == 2 * 60 * 1000 ? ID_POLL_2M
+                       : pollMs == 5 * 60 * 1000 ? ID_POLL_5M
+                       : ID_POLL_15M,
+                       MF_BYCOMMAND);
+    std::wstring pollTitle = std::wstring(L"Check interval (") + PollIntervalLabel(pollMs) + L")";
+    AppendMenuW(m, MF_POPUP, (UINT_PTR)pollMenu, pollTitle.c_str());
     AppendMenuW(m, MF_STRING, ID_REFRESH, L"Refresh now");
     AppendMenuW(m, MF_STRING | (AutostartEnabled() ? MF_CHECKED : 0), ID_AUTOSTART, L"Start with Windows");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
@@ -517,7 +589,7 @@ void ShowMenu() {
     SetForegroundWindow(g_hwnd);
     UINT cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, pt.x, pt.y, 0, g_hwnd, nullptr);
     PostMessageW(g_hwnd, WM_NULL, 0, 0);
-    DestroyMenu(m);
+    DestroyMenu(m);  // also destroys pollMenu
     switch (cmd) {
         case ID_REFRESH: G435RequestRead(); SetEvent(g_refreshEvt); break;
         case ID_AUTOSTART: SetAutostart(!AutostartEnabled()); break;
@@ -525,6 +597,11 @@ void ShowMenu() {
         case ID_WIDGET_BACKGROUND: SetWidgetBackground(!g_widgetBackground); break;
         case ID_MODE_WIDGET: SetMode(true); break;
         case ID_MODE_TRAY: SetMode(false); break;
+        case ID_POLL_30S: SetPollIntervalMs(30 * 1000); break;
+        case ID_POLL_1M: SetPollIntervalMs(60 * 1000); break;
+        case ID_POLL_2M: SetPollIntervalMs(2 * 60 * 1000); break;
+        case ID_POLL_5M: SetPollIntervalMs(5 * 60 * 1000); break;
+        case ID_POLL_15M: SetPollIntervalMs(15 * 60 * 1000); break;
         case ID_EXIT: DestroyWindow(g_hwnd); break;
         default:
             if (cmd >= ID_DEVICE_FIRST && cmd < ID_DEVICE_FIRST + keys.size()) {
@@ -548,7 +625,7 @@ DWORD WINAPI Worker(LPVOID) {
         auto* v = new std::vector<DeviceStatus>(PollAllDevices());
         if (!PostMessageW(g_hwnd, WM_RESULTS, 0, (LPARAM)v)) delete v;
         HANDLE hs[2] = { g_stopEvt, g_refreshEvt };
-        if (WaitForMultipleObjects(2, hs, FALSE, POLL_INTERVAL_MS) == WAIT_OBJECT_0) return 0;
+        if (WaitForMultipleObjects(2, hs, FALSE, g_pollIntervalMs.load()) == WAIT_OBJECT_0) return 0;
     }
 }
 
@@ -690,6 +767,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     g_wantWidget = LoadWidgetMode();
     g_hideLastKnown = LoadHideLastKnown();
     g_widgetBackground = LoadWidgetBackground();
+    g_pollIntervalMs.store(LoadPollIntervalMs());
     widget::SetBackground(g_widgetBackground);  // remembered by the widget across re-creation
     LoadHidden();
     Reconcile();

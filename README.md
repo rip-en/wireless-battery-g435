@@ -25,7 +25,7 @@ Fork of [krisgfx9/Wireless-Device-Battery-Monitor](https://github.com/krisgfx9/W
 - **Asleep / deferred:** dimmed text = last known value.
 - **Theme:** follows light/dark mode and DPI scaling.
 
-Hover for details. Click for the menu: devices, display mode, *Refresh now*, *Start with Windows*, *Exit*. Levels refresh about every 90 seconds (G435 USB reads much less often — see Limitations).
+Hover for details. Click for the menu: devices, display mode, **Check interval**, *Refresh now*, *Start with Windows*, *Exit*. Levels refresh on the interval you pick (default 1 minute; G435 USB reads much less often — see Limitations).
 
 ## Supported devices
 
