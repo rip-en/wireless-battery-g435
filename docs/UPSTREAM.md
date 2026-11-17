@@ -39,6 +39,11 @@ These are **opinionated** and may not belong in the first upstream PR:
 
 Ship those here as a “G435-friendly / lighter UI” build. If upstream likes them later, send separate small PRs.
 
+## Status
+
+- Upstream PR: https://github.com/krisgfx9/Wireless-Device-Battery-Monitor/pull/189
+- Release fork: https://github.com/rip-en/wireless-battery-g435/releases/tag/v1.1.0-g435
+
 ## Recommended workflow
 
 1. **Publish this fork** under your GitHub account with a release (portable zip + exe).

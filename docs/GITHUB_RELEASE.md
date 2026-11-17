@@ -1,3 +1,16 @@
+# GitHub release (done)
+
+Published under **rip-en**:
+
+- Repo: https://github.com/rip-en/wireless-battery-g435
+- Release: https://github.com/rip-en/wireless-battery-g435/releases/tag/v1.1.0-g435
+- Upstream PR: https://github.com/krisgfx9/Wireless-Device-Battery-Monitor/pull/189
+- Upstream fork: https://github.com/rip-en/Wireless-Device-Battery-Monitor
+
+Note: GitHub Actions workflows were omitted from the GitHub `main` push because the connected OAuth token lacks the `workflow` scope. The source tree and release binaries are complete.
+
+---
+
 # Publish on your GitHub
 
 Suggested repo name: `wireless-battery-g435`
