@@ -7,8 +7,11 @@
 //  * Read: a leading 0 report ID is stripped, so data[0] is the first payload byte for
 //    unnumbered reports and the report ID for numbered ones.
 #include <windows.h>
+// Ubuntu's mingw-w64 hidsdi.h / hidpi.h omit extern "C", so C++ mangles HidD_*/HidP_* and the link fails.
+extern "C" {
 #include <hidsdi.h>
 #include <hidpi.h>
+}
 
 #include <initializer_list>
 #include <string>
