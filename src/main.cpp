@@ -43,7 +43,7 @@ HWND g_hwnd;
 HANDLE g_refreshEvt, g_stopEvt, g_worker;
 UINT g_taskbarCreatedMsg;
 bool g_lightTaskbar;
-bool g_wantWidget = true;      // user's choice: taskbar widget (default) or tray icons
+bool g_wantWidget = false;     // tray icons by default (taskbar child widget can stall Explorer on some PCs)
 bool g_useWidget = false;      // what is actually shown right now
 bool g_hideLastKnown = false;  // hide (last known) / asleep devices from taskbar and tray
 bool g_widgetBackground = false;  // draw a plate behind the taskbar text (transparent taskbar themes)
@@ -131,8 +131,8 @@ void SaveBoolSetting(const wchar_t* name, bool on) {
     RegSetKeyValueW(HKEY_CURRENT_USER, kSettingsKey, name, REG_DWORD, &v, sizeof(v));
 }
 
-bool LoadWidgetMode() { return LoadBoolSetting(L"TaskbarWidget", true); }
-void SaveWidgetMode(bool on) { SaveBoolSetting(L"TaskbarWidget", on); }
+bool LoadWidgetMode() { return LoadBoolSetting(L"TaskbarWidgetTrayDefault", false); }
+void SaveWidgetMode(bool on) { SaveBoolSetting(L"TaskbarWidgetTrayDefault", on); }
 bool LoadHideLastKnown() { return LoadBoolSetting(L"HideLastKnownDevices", false); }
 void SaveHideLastKnown(bool on) { SaveBoolSetting(L"HideLastKnownDevices", on); }
 bool LoadWidgetBackground() { return LoadBoolSetting(L"WidgetBackground", false); }
@@ -690,7 +690,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
     LoadHidden();
     Reconcile();
     UpdatePlaceholder();  // something to click on until the first poll finishes
-    SetTimer(g_hwnd, TIMER_WIDGET, 1000, nullptr);
+    SetTimer(g_hwnd, TIMER_WIDGET, 5000, nullptr);
     g_worker = CreateThread(nullptr, 0, Worker, nullptr, 0, nullptr);
 
     MSG m;

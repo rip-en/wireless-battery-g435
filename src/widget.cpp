@@ -34,7 +34,7 @@ RECT WidgetsButtonRect() {
     static ULONGLONG last = 0;
     static RECT cached{};
     ULONGLONG now = GetTickCount64();
-    if (last && now - last < 5000) return cached;
+    if (last && now - last < 30000) return cached;
     last = now;
     cached = {};
     if (!uia) {
