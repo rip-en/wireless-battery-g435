@@ -23,7 +23,7 @@ constexpr UINT WM_RESULTS = WM_APP + 2;
 constexpr UINT WM_WIDGET_CLICK = WM_APP + 3;
 constexpr UINT_PTR TIMER_DEBOUNCE = 1;
 constexpr UINT_PTR TIMER_WIDGET = 2;
-constexpr DWORD POLL_INTERVAL_MS = 60 * 1000;
+constexpr DWORD POLL_INTERVAL_MS = 90 * 1000;  // less frequent HID enumeration keeps the PC snappy
 constexpr int LOW_BATTERY = 15;
 constexpr UINT PLACEHOLDER_ID = 1;
 
@@ -542,6 +542,8 @@ void ShowMenu() {
 // ---- worker thread ----------------------------------------------------------------------------
 
 DWORD WINAPI Worker(LPVOID) {
+    // Let the tray/UI come up before the first HID sweep (and the G435 USB read).
+    if (WaitForSingleObject(g_stopEvt, 2000) == WAIT_OBJECT_0) return 0;
     for (;;) {
         auto* v = new std::vector<DeviceStatus>(PollAllDevices());
         if (!PostMessageW(g_hwnd, WM_RESULTS, 0, (LPARAM)v)) delete v;
@@ -581,7 +583,7 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             if (wp) DestroyWindow(h);
             return 0;
         case WM_DEVICECHANGE:
-            if (wp == DBT_DEVICEARRIVAL || wp == DBT_DEVICEREMOVECOMPLETE) RefreshSoon(2500);
+            if (wp == DBT_DEVICEARRIVAL || wp == DBT_DEVICEREMOVECOMPLETE) RefreshSoon(5000);
             return TRUE;
         case WM_POWERBROADCAST:
             if (wp == PBT_APMRESUMEAUTOMATIC) RefreshSoon(5000);
@@ -659,6 +661,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmdLine, int) {
         return 0;
     }
     g_inst = inst;
+    // Stay out of the way of games and foreground apps.
+    SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
 
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\WirelessBatteryTray");
     if (GetLastError() == ERROR_ALREADY_EXISTS) return 0;

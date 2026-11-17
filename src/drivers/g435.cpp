@@ -8,8 +8,10 @@
 //              commands. Protocol from github.com/DsGrilo/G435-Battery-app (MIT).
 //
 // Both paths only send the battery-read sequence; nothing is written to flash. Reads are cached
-// for 30 minutes (5 minutes while the headset is off) because of the audio interruption. The
+// for 45 minutes (5 minutes while the headset is off) because of the audio interruption. The
 // Realtek path ALWAYS exits the bootloader (RAII), even on failure — leaving it open wedges USB.
+// The last good reading is remembered in the registry so a restart can show a value before the
+// deferred first USB query runs.
 #include "drivers.h"
 #include "g435_protocol.h"
 
@@ -21,19 +23,46 @@ namespace {
 constexpr USHORT kVid = 0x046D;
 constexpr USHORT kPidRealtek = 0x0ACB;
 constexpr USHORT kPidHoltek = 0x0ADF;
-constexpr ULONGLONG kReadEveryMs = 30ull * 60 * 1000;
+constexpr ULONGLONG kReadEveryMs = 45ull * 60 * 1000;
 constexpr ULONGLONG kRetryEveryMs = 5ull * 60 * 1000;
+constexpr ULONGLONG kStartupDeferMs = 20ull * 1000;  // no USB bridge traffic until the desktop settles
 constexpr BYTE kReport = 0x06;
+constexpr wchar_t kRegKey[] = L"Software\\WirelessBattery";
 
 std::atomic<bool> g_forceRead{ false };
+const ULONGLONG g_processStart = GetTickCount64();
 
 struct Cache {
     bool haveReading = false;
+    bool loaded = false;
     int lastMv = 0;
     ULONGLONG lastAttempt = 0;  // cooldown; never cleared on brief USB dropouts
     USHORT pid = 0;
 };
 Cache g_cache;
+
+void LoadPersisted() {
+    if (g_cache.loaded) return;
+    g_cache.loaded = true;
+    DWORD mv = 0, pid = 0, n = sizeof(DWORD);
+    if (RegGetValueW(HKEY_CURRENT_USER, kRegKey, L"G435Mv", RRF_RT_REG_DWORD, nullptr, &mv, &n) != ERROR_SUCCESS) return;
+    n = sizeof(DWORD);
+    if (RegGetValueW(HKEY_CURRENT_USER, kRegKey, L"G435Pid", RRF_RT_REG_DWORD, nullptr, &pid, &n) != ERROR_SUCCESS) return;
+    if (!G435::IsPlausible((int)mv) || (pid != kPidRealtek && pid != kPidHoltek)) return;
+    g_cache.lastMv = (int)mv;
+    g_cache.pid = (USHORT)pid;
+    g_cache.haveReading = true;
+}
+
+void SavePersisted() {
+    if (!g_cache.haveReading) return;
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, kRegKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS) return;
+    DWORD mv = (DWORD)g_cache.lastMv, pid = g_cache.pid;
+    RegSetValueExW(key, L"G435Mv", 0, REG_DWORD, (const BYTE*)&mv, sizeof(mv));
+    RegSetValueExW(key, L"G435Pid", 0, REG_DWORD, (const BYTE*)&pid, sizeof(pid));
+    RegCloseKey(key);
+}
 
 // ---- Realtek (046D:0ACB) — Write + input ACK, feature replies for PA payloads ----------------
 
@@ -207,6 +236,8 @@ int ReadHoltekMv(HidDev& d) {
 void G435RequestRead() { g_forceRead = true; }
 
 void PollG435(PollContext& ctx) {
+    LoadPersisted();
+
     auto realtek = ctx.Find(kVid, kPidRealtek, [](const HidColl& c) {
         return c.page() == 0xFFC0 && c.featLen() == 64 && c.outLen() >= 20;
     });
@@ -232,7 +263,8 @@ void PollG435(PollContext& ctx) {
     ULONGLONG now = GetTickCount64();
     ULONGLONG wait = g_cache.haveReading ? kReadEveryMs : kRetryEveryMs;
     bool force = g_forceRead.exchange(false);
-    bool due = force || g_cache.lastAttempt == 0 || g_cache.pid != pid || now - g_cache.lastAttempt >= wait;
+    bool startupHold = !force && g_cache.lastAttempt == 0 && now - g_processStart < kStartupDeferMs;
+    bool due = !startupHold && (force || g_cache.lastAttempt == 0 || g_cache.pid != pid || now - g_cache.lastAttempt >= wait);
     if (due) {
         HidDev d;
         if (d.Open(*coll)) {
@@ -240,8 +272,13 @@ void PollG435(PollContext& ctx) {
             g_cache.lastAttempt = now;
             g_cache.pid = pid;
             int mv = isHoltek ? ReadHoltekMv(d) : ReadRealtekMv(d);
-            g_cache.haveReading = mv != 0;
-            if (mv) g_cache.lastMv = mv;
+            if (mv) {
+                g_cache.haveReading = true;
+                g_cache.lastMv = mv;
+                SavePersisted();
+            } else if (!g_cache.haveReading) {
+                // keep any persisted value; only clear when we never had one
+            }
         }
     }
     if (!g_cache.haveReading) return;
@@ -254,5 +291,7 @@ void PollG435(PollContext& ctx) {
     s.millivolts = g_cache.lastMv;
     s.percent = G435::Percent(g_cache.lastMv);
     s.graceSec = 1800;
+    // Soften the first minutes after launch when we are still showing the last saved reading.
+    if (startupHold) s.asleep = true;
     ctx.out.push_back(s);
 }
