@@ -69,12 +69,33 @@ end;
 
 { Removes the startup entry only if it points at this installed copy, so a portable copy's
   "Start with Windows" setting is left alone. }
-procedure RemoveOwnAutostart();
+function AutostartCurrentlyOurs(): Boolean;
 var
   Value: String;
 begin
-  if RegQueryStringValue(HKCU, RunKey, 'WirelessBattery', Value) and (CompareText(Value, InstalledRunValue()) = 0) then
+  Result := RegQueryStringValue(HKCU, RunKey, 'WirelessBattery', Value) and (CompareText(Value, InstalledRunValue()) = 0);
+end;
+
+procedure RemoveOwnAutostart();
+begin
+  if AutostartCurrentlyOurs() then
     RegDeleteValue(HKCU, RunKey, 'WirelessBattery');
+end;
+
+var
+  AutostartTaskSeeded: Boolean;
+
+{ The installer task is unchecked unless the user picked it last time. Turning the option on
+  inside the app writes the same registry value, and an upgrade must not treat "task not
+  selected" as a request to delete that entry. }
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID = wpSelectTasks) and (not AutostartTaskSeeded) then
+  begin
+    AutostartTaskSeeded := True;
+    if AutostartCurrentlyOurs() then
+      WizardSelectTasks('autostart');
+  end;
 end;
 
 { True if this account can create the chosen folder (or write to it if it already exists).
@@ -132,8 +153,9 @@ begin
     QuitRunningApp();  { upgrade: close the old version so its files can be replaced }
   if CurStep = ssPostInstall then
   begin
-    { Same value the app's own "Start with Windows" menu item writes, so the two stay in sync. }
-    if WizardIsTaskSelected('autostart') then
+    { Same value the app's own "Start with Windows" menu item writes, so the two stay in sync.
+      A silent upgrade has no tasks page: keep an entry that already points at this copy. }
+    if WizardIsTaskSelected('autostart') or (WizardSilent() and AutostartCurrentlyOurs()) then
       RegWriteStringValue(HKCU, RunKey, 'WirelessBattery', InstalledRunValue())
     else
       RemoveOwnAutostart();
