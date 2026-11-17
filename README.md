@@ -1,32 +1,31 @@
-# Wireless Battery
+# Wireless Battery (G435 fork)
 
-Battery levels of your wireless mouse, headset, keyboard and controller, right on the Windows taskbar.
+Battery levels of your wireless mouse, headset, keyboard and controller on Windows — with **Logitech G435** support for both LIGHTSPEED receivers (`046D:0ACB` Realtek and `046D:0ADF` Holtek).
 
-> **This tree adds Logitech G435 support** for both LIGHTSPEED receivers (`046D:0ACB` Realtek and `046D:0ADF` Holtek). It is based on [krisgfx9/Wireless-Device-Battery-Monitor](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor). See [docs/g435.md](docs/g435.md).
+Fork of [krisgfx9/Wireless-Device-Battery-Monitor](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor) (GPL-3.0). See [docs/g435.md](docs/g435.md) and [docs/UPSTREAM.md](docs/UPSTREAM.md) (what to contribute upstream vs keep here).
 
 ![Wireless Battery on the taskbar](docs/screenshot.png)
 
-> **Just want it working?** Download **[WirelessBattery-Setup](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor/releases/latest)** from the latest release, run it and click through. That's it.
+> **Just want it working?** Grab the portable zip from this repo’s [Releases](../../releases/latest), unzip, run `WirelessBattery.exe`.
 >
-> **Experienced users** can grab the portable zip, use the [command-line options](#command-line), or [build it from source](#build) with `make` or `build.bat`.
+> **Upstream releases** (without this fork’s G435/UI tweaks): [WirelessBattery-Setup](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor/releases/latest).
 
-- **Tiny**: a ~350 KB app using about 2 MB of RAM. It's plain C++/Win32, with no runtime and no background service, and installs in seconds without admin rights.
-- **No vendor software needed**: it talks to the devices directly. G HUB, Synapse, iCUE, GG and NGenuity can stay closed (or keep running; they don't conflict).
-- **Many brands**: Logitech, Razer, SteelSeries, Corsair, HyperX, Glorious, Jabra, PlayStation and Xbox controllers, any Bluetooth device Windows knows a battery level for, and every headset the bundled [HeadsetControl](https://github.com/Sapd/HeadsetControl) supports.
-- **Many brands**: Logitech, Razer, SteelSeries, Corsair, HyperX, Glorious, PlayStation and Xbox controllers, Samsung Galaxy Buds, any Bluetooth device Windows knows a battery level for, and every headset the bundled [HeadsetControl](https://github.com/Sapd/HeadsetControl) supports.
+- **Tiny**: ~500 KB portable exe, plain C++/Win32, no runtime, no background service.
+- **No vendor software needed**: talks to devices directly (G HUB can stay closed).
+- **G435-friendly**: tray icons by default, deferred/rare G435 USB reads, below-normal priority.
+- **Many brands**: same vendor coverage as upstream (Logitech, Razer, SteelSeries, Corsair, HyperX, Glorious, controllers, Bluetooth, …).
 
 ## Display
 
-**On the taskbar (default):** `🎧 30%  🖱 93%` next to the notification area, drawn with the Windows icon font.
-- **Low battery:** a red number means 15% or less.
-- **Charging:** a blue ⚡ appears next to the number.
-- **Asleep:** dimmed text means the device is asleep and the last known value is shown.
-- **Theme:** it follows light/dark mode and DPI scaling.
-- **Transparent taskbar themes** (e.g. Windhawk's Taskbar Styler): turn on *Background behind taskbar text* in the menu to keep the text readable over the wallpaper.
+**Tray icons (default in this fork):** one icon per device with the percentage, plus a “Low battery” notification at 15%.
 
-**Tray icons:** one icon per device with the number drawn in it, plus a "Low battery" notification at 15%. The app switches to this automatically when the taskbar is vertical or can't be found.
+**Optional taskbar text:** right-click → *Show on the taskbar* for `🎧 30%  🖱 93%` next to the notification area.
+- **Low battery:** red at 15% or less.
+- **Charging:** blue ⚡ next to the number.
+- **Asleep / deferred:** dimmed text = last known value.
+- **Theme:** follows light/dark mode and DPI scaling.
 
-Hover for details. Click for the menu: every device (click one to hide or show it), display mode, *Refresh now*, *Start with Windows*, and *Exit*. Levels refresh every 60 seconds, and right away when a device is plugged in or the PC wakes up.
+Hover for details. Click for the menu: devices, display mode, *Refresh now*, *Start with Windows*, *Exit*. Levels refresh about every 90 seconds (G435 USB reads much less often — see Limitations).
 
 ## Supported devices
 
