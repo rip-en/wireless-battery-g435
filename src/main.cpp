@@ -708,6 +708,9 @@ int ListToConsole(bool dump) {
         write(DumpHidCollections());
         return 0;
     }
+    // The tray defers the first G435 read so logon does not mute audio. --list is an explicit
+    // request for the current level, so read now (Realtek mutes USB audio for about a second).
+    G435RequestRead();
     auto list = PollAllDevices();
     if (list.empty()) write(L"No devices with battery info found.\n");
     for (auto& s : list) {

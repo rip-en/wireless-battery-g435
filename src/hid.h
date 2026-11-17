@@ -58,6 +58,9 @@ public:
 
     bool SetFeature(const std::vector<BYTE>& data);
     bool GetFeature(BYTE reportId, std::vector<BYTE>& out);  // out[0] = report ID
+    // HidD_GetInputReport. out[0] stays the report ID (Read() would strip a leading 0).
+    // Does not dequeue interrupt IN reports. `length` 0 uses the collection's input length.
+    bool GetInputReport(BYTE reportId, std::vector<BYTE>& out, USHORT length = 0);
 
 private:
     HANDLE h_ = INVALID_HANDLE_VALUE;

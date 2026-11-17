@@ -1,15 +1,19 @@
 // Logitech G435 LIGHTSPEED headset. It does not speak HID++. Two receiver revisions exist:
 //
 //   046D:0ACB  Realtek PA bridge on feature report 6 of usage page FFC0. Entering the bridge
-//              mutes USB audio for ~0.8 s. Protocol from github.com/fr0styJS/g435-lightspeed-battery
-//              (MIT) and WirelessBattery PRs #72 / #93.
+//              mutes USB audio for ~0.8 s. Enter, PA, and exit are HidD_SetFeature (report 6,
+//              64 bytes), matching github.com/fr0styJS/g435-lightspeed-battery (MIT) and
+//              WirelessBattery PR #93.
 //
 //   046D:0ADF  Holtek USB bridge on usage page FF00. CRC-16/XMODEM reports carry the same PA
-//              commands. Protocol from github.com/DsGrilo/G435-Battery-app (MIT).
+//              commands. Protocol from github.com/DsGrilo/G435-Battery-app (MIT). The 'O'/'F'
+//              ack is HidD_GetInputReport (report 0, byte 1), not an interrupt read.
 //
-// Both paths only send the battery-read sequence; nothing is written to flash. Reads are cached
-// for 45 minutes (5 minutes while the headset is off) because of the audio interruption. The
-// Realtek path ALWAYS exits the bootloader (RAII), even on failure — leaving it open wedges USB.
+// Both paths only send the battery-read sequence; nothing is written to flash. A successful
+// read is cached for 45 minutes. A failed read (headset off) is retried after 5 minutes and the
+// previous value is shown as asleep. The Realtek path ALWAYS exits the bootloader (RAII) after
+// a successful enter — leaving it open wedges USB. The Holtek path restores local mode the same
+// way, and the whole Holtek attempt stops within 4 seconds.
 // The last good reading is remembered in the registry so a restart can show a value before the
 // deferred first USB query runs.
 #include "drivers.h"
@@ -35,6 +39,7 @@ const ULONGLONG g_processStart = GetTickCount64();
 
 struct Cache {
     bool haveReading = false;
+    bool lastReadOk = false;    // false -> 5 min retry and show the previous value as asleep
     bool loaded = false;
     int lastMv = 0;
     int lastPct = -1;           // sticky display % so ADC noise does not flicker the tray
@@ -67,83 +72,51 @@ void SavePersisted() {
     RegCloseKey(key);
 }
 
-// ---- Realtek (046D:0ACB) — Write + input ACK, feature replies for PA payloads ----------------
-
-bool RealtekWrite(HidDev& d, const std::vector<BYTE>& msg) {
-    d.Flush();
-    return d.Write(msg);
-}
-
-bool RealtekAck(HidDev& d, BYTE& ack, int timeoutMs = 800) {
-    ULONGLONG end = GetTickCount64() + (ULONGLONG)timeoutMs;
-    std::vector<BYTE> r;
-    while ((LONGLONG)end - (LONGLONG)GetTickCount64() > 0) {
-        int left = (int)((LONGLONG)end - (LONGLONG)GetTickCount64());
-        if (left < 1) break;
-        if (d.Read(r, left) < 2) continue;
-        if (r[0] == kReport) {
-            ack = r[1];
-            return true;
-        }
-    }
-    return false;
-}
-
-bool RealtekBridge(HidDev& d, const std::vector<BYTE>& msg, BYTE& ack) {
-    if (!RealtekWrite(d, msg)) return false;
-    return RealtekAck(d, ack);
-}
+// ---- Realtek (046D:0ACB) — feature report 6, same bytes as fr0styJS / #93 --------------------
 
 bool RealtekSendPa(HidDev& d, std::initializer_list<BYTE> frame) {
     std::vector<BYTE> msg = { kReport, 0x04, 0x03, 0x00, (BYTE)frame.size() };
     msg.insert(msg.end(), frame.begin(), frame.end());
-    BYTE ack = 0;
-    return RealtekBridge(d, msg, ack);
+    return d.SetFeature(msg);  // padded to the 64-byte feature report
 }
 
-// RAII: always leave the bootloader, even when a query fails. Leaving it open freezes USB audio.
+// RAII: always leave the bootloader after a successful enter, even when a query fails.
 struct BootloaderGuard {
     HidDev& d;
     bool active = false;
     ~BootloaderGuard() {
         if (!active) return;
-        BYTE ack = 0;
-        RealtekBridge(d, std::vector<BYTE>{ kReport, 0x08, 0x03 }, ack);
+        d.SetFeature({ kReport, 0x08, 0x03, 0x00, 0x00, 0x00, 0x00 });
         Sleep(100);
     }
 };
 
 int ReadRealtekMv(HidDev& d) {
-    // Match collection that can Write (515-byte OUT) and has feature report 6.
-    if (!RealtekWrite(d, std::vector<BYTE>{ kReport, 0x01, 0x03 })) return 0;
+    // Enter is a feature report. A failed SetFeature did not enter, so there is nothing to exit.
+    if (!d.SetFeature({ kReport, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00 })) return 0;
     BootloaderGuard guard{ d, true };
-    BYTE ack = 0;
-    if (!RealtekAck(d, ack)) return 0;  // enter write reached the device; guard still exits
-    Sleep(200);
+    Sleep(250);
 
-    // Drain stale feature replies after enter.
-    for (int i = 0; i < 8; i++) {
-        std::vector<BYTE> buf;
-        if (!d.GetFeature(kReport, buf) || buf.size() < 2 || buf[1] == 0xFF) break;
-    }
+    std::vector<BYTE> r;
+    d.GetFeature(kReport, r);  // one drain, same as fr0styJS / #93
 
     if (!RealtekSendPa(d, { 0x50, 0x41, 0x0E, 0x00, 0x02, 0xE1, 0x01 })) return 0;  // remote
     Sleep(150);
 
-    // Take several samples while the bridge is open; median beats a single noisy ADC hit.
+    // Several samples while the bridge is open; median beats a single noisy ADC hit.
+    // The window matches #93 (800 ms, 30 ms between polls).
     std::vector<int> samples;
     if (RealtekSendPa(d, { 0x50, 0x41, 0x06, 0x00, 0x01, 0x00, 0x31 })) {
-        ULONGLONG end = GetTickCount64() + 900;
-        std::vector<BYTE> r;
+        ULONGLONG end = GetTickCount64() + 800;
         while (samples.size() < 5 && GetTickCount64() < end) {
             if (d.GetFeature(kReport, r)) {
                 int parsed = 0;
-                if (G435::ParseRealtekBattery(r.data(), r.size(), parsed) && G435::IsPlausible(parsed)) {
+                if (G435::ParseRealtekBattery(r.data(), r.size(), parsed) && G435::IsPlausible(parsed))
                     samples.push_back(parsed);
-                    continue;
-                }
             }
-            Sleep(40);
+            if (samples.size() >= 5 || GetTickCount64() >= end) break;
+            DWORD nap = (DWORD)(end - GetTickCount64());
+            Sleep(nap > 30 ? 30 : nap);
         }
     }
 
@@ -165,12 +138,15 @@ constexpr BYTE kOtaGetBattery = 0x31;
 
 bool HoltekWrite(HidDev& d, BYTE hidCmd, const std::vector<BYTE>& payload, bool checkAck) {
     auto report = G435::BuildHoltekReport(hidCmd, payload.data(), payload.size());
+    // Drop stale interrupt frames only. The ack itself is a control GET_REPORT: DsGrilo reads
+    // get_input_report(0, 65) and checks byte 1. Interrupt Read() strips report ID 0, so the
+    // 'O' would be missed, and that read can consume the event frame that carries the reply.
     d.Flush();
     if (!d.Write(report)) return false;
+    Sleep(10);
     std::vector<BYTE> in;
-    int n = d.Read(in, 200);
-    if (n < 1) return !checkAck;
-    if (checkAck && in[0] != (BYTE)'O') return false;
+    if (!d.GetInputReport(0, in, 65) || in.size() < 2) return false;
+    if (checkAck && in[1] != (BYTE)'O') return false;
     return true;
 }
 
@@ -183,12 +159,18 @@ bool HoltekAw(HidDev& d, std::vector<BYTE> cmd, BYTE& transmission, BYTE* usedTr
     return HoltekWrite(d, kHidAwWrite, cmd, true);
 }
 
-bool HoltekWait(HidDev& d, int timeoutMs, const std::function<bool(const G435::HoltekFrame&)>& match) {
-    ULONGLONG end = GetTickCount64() + (ULONGLONG)timeoutMs;
-    while (GetTickCount64() < end) {
+int MsLeft(ULONGLONG deadline) {
+    LONGLONG left = (LONGLONG)deadline - (LONGLONG)GetTickCount64();
+    return left > 0 ? (int)left : 0;
+}
+
+bool HoltekWait(HidDev& d, ULONGLONG deadline, const std::function<bool(const G435::HoltekFrame&)>& match) {
+    while (MsLeft(deadline) > 0) {
+        int slice = MsLeft(deadline);
+        if (slice > 100) slice = 100;
         std::vector<BYTE> in;
-        if (d.Read(in, 100) < 1) {
-            Sleep(20);  // never busy-spin if Read fails immediately
+        if (d.Read(in, slice) < 1) {
+            if (MsLeft(deadline) > 20) Sleep(20);  // never busy-spin if Read fails immediately
             continue;
         }
         for (const auto& f : G435::ParseHoltekReport(in.data(), in.size())) {
@@ -198,46 +180,67 @@ bool HoltekWait(HidDev& d, int timeoutMs, const std::function<bool(const G435::H
     return false;
 }
 
-int HoltekLqGet(HidDev& d, BYTE cmd, BYTE& transmission) {
+// Each reply wait is at most 1.5 s, and never past `deadline` (one budget for the whole read).
+int HoltekLqGet(HidDev& d, BYTE cmd, BYTE& transmission, ULONGLONG deadline) {
+    if (MsLeft(deadline) < 1) return -1;
     if (!HoltekAw(d, G435::HoltekLq(cmd), transmission)) return -1;
     int value = -1;
-    HoltekWait(d, 1500, [&](const G435::HoltekFrame& f) {
+    ULONGLONG waitEnd = GetTickCount64() + 1500;
+    if (waitEnd > deadline) waitEnd = deadline;
+    HoltekWait(d, waitEnd, [&](const G435::HoltekFrame& f) {
         return G435::ParseHoltekLqValue(f, cmd, value);
     });
     return value;
 }
 
-bool HoltekSetRemote(HidDev& d, bool remote, BYTE& transmission) {
+bool HoltekSetRemote(HidDev& d, bool remote, BYTE& transmission, ULONGLONG deadline) {
+    if (MsLeft(deadline) < 1) return false;
     if (!HoltekAw(d, G435::HoltekLq(kLqSetMode, { (BYTE)(remote ? 1 : 0) }), transmission)) return false;
-    return HoltekLqGet(d, kLqGetMode, transmission) == (remote ? 1 : 0);
+    return HoltekLqGet(d, kLqGetMode, transmission, deadline) == (remote ? 1 : 0);
 }
 
 int ReadHoltekMv(HidDev& d) {
+    // One absolute deadline for the attempt, including the local-mode restore. A silent
+    // headset must not stall the poll past this (CONTRIBUTING's 4-second cap).
+    const ULONGLONG hardEnd = GetTickCount64() + 4000;
+    const ULONGLONG queryEnd = hardEnd - 800;  // leave time to send local mode
     BYTE transmission = 0;
-    HoltekWrite(d, kHidPowerSaving, { 0x01 }, false);
+    if (!HoltekWrite(d, kHidPowerSaving, { 0x01 }, false)) return 0;
 
-    int link = HoltekLqGet(d, kLqGetConnect, transmission);
+    int link = HoltekLqGet(d, kLqGetConnect, transmission, queryEnd);
     if (link < 0 || (link & 0x08) == 0) return 0;
 
-    int mode = HoltekLqGet(d, kLqGetMode, transmission);
+    int mode = HoltekLqGet(d, kLqGetMode, transmission, queryEnd);
+    if (mode < 0) return 0;  // don't switch mode if we never learned the current one
     bool wasRemote = mode == 1;
-    if (!wasRemote && !HoltekSetRemote(d, true, transmission)) return 0;
+
+    struct LocalModeGuard {
+        HidDev& dev;
+        BYTE& transmission;
+        ULONGLONG deadline;
+        bool armed = false;
+        ~LocalModeGuard() {
+            if (armed) HoltekSetRemote(dev, false, transmission, deadline);
+        }
+    } restore{ d, transmission, hardEnd };
+
+    if (!wasRemote) {
+        restore.armed = true;  // set-remote can succeed even when the verify step does not
+        if (!HoltekSetRemote(d, true, transmission, queryEnd)) return 0;
+    }
 
     int mv = 0;
     BYTE trans = 0;
-    if (!HoltekAw(d, G435::HoltekOta(kOtaGetBattery), transmission, &trans)) {
-        if (!wasRemote) HoltekSetRemote(d, false, transmission);
-        return 0;
-    }
-    HoltekWait(d, 1500, [&](const G435::HoltekFrame& f) {
+    if (!HoltekAw(d, G435::HoltekOta(kOtaGetBattery), transmission, &trans)) return 0;
+    ULONGLONG waitEnd = GetTickCount64() + 1500;
+    if (waitEnd > queryEnd) waitEnd = queryEnd;
+    HoltekWait(d, waitEnd, [&](const G435::HoltekFrame& f) {
         int parsed = 0;
         if (!G435::ParseHoltekOtaMv(f, trans, parsed)) return false;
         if (G435::IsPlausible(parsed)) { mv = parsed; return true; }
         return false;
     });
-
-    if (!wasRemote) HoltekSetRemote(d, false, transmission);
-    return mv;
+    return mv;  // guard restores local mode when this read switched into remote
 }
 
 }  // namespace
@@ -247,8 +250,9 @@ void G435RequestRead() { g_forceRead = true; }
 void PollG435(PollContext& ctx) {
     LoadPersisted();
 
+    // Feature report 6 only — #93's match. The OUT pipe is not used.
     auto realtek = ctx.Find(kVid, kPidRealtek, [](const HidColl& c) {
-        return c.page() == 0xFFC0 && c.featLen() == 64 && c.outLen() >= 20;
+        return c.page() == 0xFFC0 && c.featLen() == 64;
     });
     auto holtek = ctx.Find(kVid, kPidHoltek, [](const HidColl& c) {
         return c.page() == 0xFF00 && c.outLen() >= 65 && c.inLen() >= 64;
@@ -270,7 +274,8 @@ void PollG435(PollContext& ctx) {
     ctx.Claim(kVid, pid);
 
     ULONGLONG now = GetTickCount64();
-    ULONGLONG wait = g_cache.haveReading ? kReadEveryMs : kRetryEveryMs;
+    // A failed read must not keep the 45-minute schedule just because an older value exists.
+    ULONGLONG wait = (g_cache.haveReading && g_cache.lastReadOk) ? kReadEveryMs : kRetryEveryMs;
     bool force = g_forceRead.exchange(false);
     bool startupHold = !force && g_cache.lastAttempt == 0 && now - g_processStart < kStartupDeferMs;
     bool due = !startupHold && (force || g_cache.lastAttempt == 0 || g_cache.pid != pid || now - g_cache.lastAttempt >= wait);
@@ -283,11 +288,12 @@ void PollG435(PollContext& ctx) {
             int mv = isHoltek ? ReadHoltekMv(d) : ReadRealtekMv(d);
             if (mv) {
                 g_cache.haveReading = true;
+                g_cache.lastReadOk = true;
                 g_cache.lastMv = mv;
                 g_cache.lastPct = G435::StickyPercent(mv, g_cache.lastPct);
                 SavePersisted();
-            } else if (!g_cache.haveReading) {
-                // keep any persisted value; only clear when we never had one
+            } else {
+                g_cache.lastReadOk = false;
             }
         }
     }
@@ -301,8 +307,8 @@ void PollG435(PollContext& ctx) {
     s.millivolts = g_cache.lastMv;
     if (g_cache.lastPct < 0) g_cache.lastPct = G435::StickyPercent(g_cache.lastMv, -1);
     s.percent = g_cache.lastPct;
-    s.graceSec = 1800;
-    // Soften the first minutes after launch when we are still showing the last saved reading.
-    if (startupHold) s.asleep = true;
+    s.graceSec = 1800;  // receiver unplugged: UI keeps this value, dimmed, for 30 minutes
+    // Persisted or failed readings stay visible, but dimmed until a live read succeeds.
+    s.asleep = startupHold || !g_cache.lastReadOk;
     ctx.out.push_back(s);
 }
