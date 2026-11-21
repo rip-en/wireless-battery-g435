@@ -1,49 +1,24 @@
-# GitHub release (done)
+# GitHub release
 
-Published under **rip-en**:
+Final release of this fork, for the original G435 Realtek dongle (`046D:0ACB`).
 
 - Repo: https://github.com/rip-en/wireless-battery-g435
-- Release: https://github.com/rip-en/wireless-battery-g435/releases/tag/v1.1.0-g435
-- Upstream PR: https://github.com/krisgfx9/Wireless-Device-Battery-Monitor/pull/189
-- Upstream fork: https://github.com/rip-en/Wireless-Device-Battery-Monitor
+- Release: https://github.com/rip-en/wireless-battery-g435/releases/tag/v1.2.0
+- Upstream PR (closed, not merged): https://github.com/krisgfx9/Wireless-Device-Battery-Monitor/pull/189
 
-Note: GitHub Actions workflows were omitted from the GitHub `main` push because the connected OAuth token lacks the `workflow` scope. The source tree and release binaries are complete.
+Upstream main supports `046D:0ADF` and does not read `046D:0ACB`. The reason, and the hardware constraint, is in [g435.md](g435.md) and [UPSTREAM.md](UPSTREAM.md).
 
----
+## Publish
 
-# Publish on your GitHub
+From a built `WirelessBattery.exe`:
 
-Suggested repo name: `wireless-battery-g435`
-
-```bash
-# 1. Create an empty public repo on GitHub (no README/license — this tree already has them)
-#    https://github.com/new
-
-# 2. From this project:
-git remote add github https://github.com/YOUR_USER/wireless-battery-g435.git
-git push -u github main
-git push github v1.1.0-g435
-
-# 3. GitHub → Releases → Draft a new release
-#    Tag: v1.1.0-g435
-#    Title: Wireless Battery (G435) 1.1.0
-#    Body: paste RELEASE_NOTES.md
-#    Attach:
-#      - WirelessBattery-G435-1.1.0-portable.zip
-#      - WirelessBattery-G435.exe
+```powershell
+Copy-Item WirelessBattery.exe dist\WirelessBattery-G435.exe
+# dist\WirelessBattery-G435-1.2.0-portable.zip contains that exe plus LICENSE.txt
+git tag -a v1.2.0 -m "Wireless Battery (G435) 1.2.0"
+git push origin main
+git push origin v1.2.0
+gh release create v1.2.0 --title "Wireless Battery (G435) 1.2.0" --notes-file RELEASE_NOTES.md dist\WirelessBattery-G435.exe dist\WirelessBattery-G435-1.2.0-portable.zip
 ```
 
-Portable zip and exe are also in this agent’s artifacts folder after the build.
-
-## Then contribute upstream
-
-```bash
-# Fork krisgfx9/Wireless-Device-Battery-Monitor on GitHub, then:
-git clone https://github.com/YOUR_USER/Wireless-Device-Battery-Monitor.git
-cd Wireless-Device-Battery-Monitor
-git checkout -b feat/logitech-g435-dual-receiver
-
-# Copy only the G435-focused files from this fork (see docs/UPSTREAM.md),
-# commit, push, open a PR against krisgfx9/main.
-# Mention issue #86 and PRs #72 / #93; include --list / --dump from your headset.
-```
+Previous release: https://github.com/rip-en/wireless-battery-g435/releases/tag/v1.1.0-g435

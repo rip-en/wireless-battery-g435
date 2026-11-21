@@ -1,9 +1,11 @@
 // Logitech G435 LIGHTSPEED headset. It does not speak HID++. Two receiver revisions exist:
 //
-//   046D:0ACB  Realtek PA bridge on feature report 6 of usage page FFC0. Entering the bridge
-//              mutes USB audio for ~0.8 s. Enter, PA, and exit are HidD_SetFeature (report 6,
-//              64 bytes), matching github.com/fr0styJS/g435-lightspeed-battery (MIT) and
-//              WirelessBattery PR #93.
+//   046D:0ACB  Realtek PA bridge on feature report 6 of usage page FFC0. This is the only
+//              battery channel on this revision: no HID++, no standard battery usage, and the
+//              hidden 0x000A push collection carries voltage only. Entering the bridge mutes
+//              USB audio for ~1 s; that mute is in the receiver. Enter, PA, and exit are
+//              HidD_SetFeature (report 6, 64 bytes), matching github.com/fr0styJS/g435-lightspeed-battery
+//              (MIT) and WirelessBattery PR #93. Upstream main does not read this dongle.
 //
 //   046D:0ADF  Holtek USB bridge on usage page FF00. CRC-16/XMODEM reports carry the same PA
 //              commands. Protocol from github.com/DsGrilo/G435-Battery-app (MIT). The 'O'/'F'

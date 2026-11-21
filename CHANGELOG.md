@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0
+
+Final release for the original G435 Realtek dongle (`046D:0ACB`).
+
+Upstream closed [PR #189](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor/pull/189): main supports `046D:0ADF` and does not read `046D:0ACB`, because a battery read on that dongle interrupts audio. The mute is a property of the Realtek PA bridge (feature report 6, usage page `FFC0`). There is no passive battery channel on that revision.
+
+This build still reads `0ACB`, at most once every 45 minutes, and always exits the bootloader. Behavior of the read path is unchanged from 1.1.0. The version resource now reports 1.2.0, and the docs record the hardware constraint.
+
 ## 1.1.0-g435
 
 - Tray menu **Check interval** (30s / 1m / 2m / 5m / 15m), remembered in the registry

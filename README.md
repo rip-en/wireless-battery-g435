@@ -2,7 +2,9 @@
 
 Battery levels of your wireless mouse, headset, keyboard and controller on Windows — with **Logitech G435** support for both LIGHTSPEED receivers (`046D:0ACB` Realtek and `046D:0ADF` Holtek).
 
-Fork of [krisgfx9/Wireless-Device-Battery-Monitor](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor) (GPL-3.0). See [docs/g435.md](docs/g435.md) and [docs/UPSTREAM.md](docs/UPSTREAM.md) (what to contribute upstream vs keep here).
+**1.2.0 is the final release for the original Realtek dongle (`046D:0ACB`).** Upstream supports the newer `046D:0ADF` receiver and does not read `0ACB`, because that read mutes USB audio for about a second. The mute is in the receiver, not in this program. This build still reads `0ACB`, at most once every 45 minutes, and always exits the bootloader bridge. See [docs/g435.md](docs/g435.md).
+
+Fork of [krisgfx9/Wireless-Device-Battery-Monitor](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor) (GPL-3.0). Upstream decision: [docs/UPSTREAM.md](docs/UPSTREAM.md).
 
 ![Wireless Battery on the taskbar](docs/screenshot.png)
 
@@ -79,17 +81,17 @@ Hover for details. Click for the menu: devices, display mode, **Check interval**
 **Tested on real hardware:** Glorious Model O Wireless, HyperX Cloud III Wireless, Cooler Master MM712 (dongle), Rapoo VT3 Max Gen 2 (receiver `24AE:1417` and USB cable `24AE:4617`; other Rapoo models are untested, see [Rapoo protocol notes](docs/rapoo.md)), Redragon M916 Pro 1K (receiver `3554:F55D`), Redragon M915RGB-WL (receiver `25A7:FA07`; other Areson models are untested, see [Areson protocol notes](docs/areson.md)), SteelSeries Rival 650 Wireless (receiver `1038:1726` and USB cable `1038:172B`), HECATE G5M PRO (receiver `35BB:D3FB`), WLMouse YING Magnesium (8K receiver `36A7:A874`), ATK N9 Ultra (receiver `373B:1204`), Corsair Scimitar Elite SE Wireless (Slipstream receiver `1B1C:2B00`), DAREU EM901X (receiver `260D:1074`; charging and sleep/wake untested), Jabra Evolve3 75 on a Link 390 (`0B0E:2E51`), MCHOSE G3 V2 (receiver `3837:4245` and USB cable `3837:418C`), AJAZZ AK820 MAX (dongle `05AC:024F`) and AirPods Pro 3 (Bluetooth, model `2027`).
 **Implemented from protocol documentation and other projects, not yet tested:** everything else. If you own one of these devices, please report whether it works by [opening an issue](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor/issues).
 
+**G435 on this fork:** original Realtek receiver `046D:0ACB` tested on Windows 11. The battery read uses feature report 6, mutes USB audio for about a second, and rejects the local-mode junk value (about 102–115). The bootloader exit is required or the dongle can stay muted until it is unplugged. The newer Holtek receiver `046D:0ADF` is implemented here and is the one upstream supports.
+
 ## Install
 
-[![Latest version](https://img.shields.io/github/v/release/krisgfx9/Wireless-Device-Battery-Monitor?label=latest%20version&style=for-the-badge)](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor/releases/latest)
+[![Latest version](https://img.shields.io/github/v/release/rip-en/wireless-battery-g435?label=latest%20version&style=for-the-badge)](https://github.com/rip-en/wireless-battery-g435/releases/latest)
 
-1. Download **`WirelessBattery-Setup-<version>.exe`** from the [latest release](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor/releases/latest).
-2. Run it and click through. It needs **no administrator rights** and **nothing else installed**: no
-   runtimes, no drivers, no vendor apps. HeadsetControl comes bundled.
+1. Download **`WirelessBattery-G435-1.2.0-portable.zip`** from the [latest release](https://github.com/rip-en/wireless-battery-g435/releases/latest).
+2. Unzip it and run `WirelessBattery.exe`. It needs **no administrator rights** and **nothing else installed**: no
+   runtimes, no drivers, no vendor apps. `WirelessBattery-G435.exe` in the same release is the same program.
 
-The installer adds a Start menu entry and an uninstaller (*Settings → Apps*), and can start the app
-when you sign in. Prefer no installer? Download `WirelessBattery-<version>-portable.zip`, unzip it
-anywhere and run `WirelessBattery.exe`.
+The official upstream installer does **not** read the original `046D:0ACB` dongle. Use it only if your G435 is on the newer `046D:0ADF` receiver: [Wireless-Device-Battery-Monitor releases](https://github.com/krisgfx9/Wireless-Device-Battery-Monitor/releases/latest).
 
 **Notes:**
 - **SmartScreen warning:** the exe is not code-signed, so Windows may say "Windows protected your PC". Click *More info → Run anyway*, or build it yourself.
@@ -113,10 +115,9 @@ build.bat       # plain cmd with g++ and windres on PATH
 ```
 
 To build the installer and portable zip, install [Inno Setup](https://jrsoftware.org/isinfo.php) and run
-`powershell -File installer\build-installer.ps1 -Version 1.0.0`. It downloads the pinned
-HeadsetControl release and verifies its checksum. GitHub Actions does all of this automatically:
-pushing a tag like `v1.0.0` publishes a release with the installer, the portable zip and the
-HeadsetControl source (as its GPL license requires).
+`powershell -File installer\build-installer.ps1 -Version 1.2.0`. It downloads the pinned
+HeadsetControl release and verifies its checksum. Releases of this fork are published from the
+tagged source; the portable zip is attached to the GitHub release.
 
 `WirelessBattery.exe` on its own also works. Without `headsetcontrol.exe` next to it (or on `PATH`) you
 just lose the extra headsets.
@@ -125,7 +126,7 @@ just lose the extra headsets.
 
 - **Primary monitor only:** the taskbar widget sits on the primary monitor's taskbar.
 - **Crowded taskbars:** with a very full centered Windows 11 taskbar, the app buttons can reach the widget. On Windows 10 the task-button area is narrowed automatically.
-- **Logitech G435:** neither LIGHTSPEED receiver has a passive battery channel. The Realtek dongle (`046D:0ACB`) mutes USB audio for about a second while its bootloader bridge is open; the Holtek dongle (`046D:0ADF`) briefly switches to remote mode for the same OTA query. The G435 is therefore read at most every 30 minutes (every 5 minutes while the headset is off) and when you click *Refresh now*. The percentage is estimated from the voltage with a generic Li-ion curve. If audio ever stays muted on the Realtek receiver, unplug and replug it. G435 support in this tree is based on community protocol research and has not been validated on hardware in this environment.
+- **Logitech G435:** neither LIGHTSPEED receiver has a passive battery channel. On the original Realtek dongle (`046D:0ACB`) the battery is reachable only through the PA bridge on feature report 6 (`FFC0`). Opening that bridge stops USB audio for about a second. That mute is in the hardware: there is no HID++, no standard battery usage, and the hidden `0x000A` push collection carries voltage only. Without remote mode the dongle answers with a junk value around 102–115, which this app rejects. If a read is interrupted and the bootloader stays open, audio can stay muted until the dongle is unplugged; this build always exits the bridge. A successful read is kept for 45 minutes (a failed read is retried after 5 minutes, while the headset is off) and *Refresh now* forces one. The newer Holtek dongle (`046D:0ADF`) briefly switches to remote mode for the same query. Upstream supports `0ADF` and does not read `0ACB`. The percentage is estimated from the voltage with a generic Li-ion curve.
 - **Phones:** read from a file Phone Link writes for the Start menu companion card, which is not a documented API and may change with Phone Link updates. The phone shows while Phone Link reports it as connected; a card older than 3 hours is shown dimmed. Charging state is not available there.
 - **Sleeping devices:** a device that is asleep may not answer. Its last value stays visible, dimmed. Logitech receivers drop sleeping devices from the link, so their last value is kept for 30 minutes.
 - **Keychron keyboards:** they only report their battery over Bluetooth (shown via the Bluetooth support). Over the 2.4 GHz receiver the firmware does not expose it. Keychron mice are supported.
